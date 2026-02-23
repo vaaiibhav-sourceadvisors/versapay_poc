@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Versapay Full Flow Debug</title>
+    <script
+      src="https://secure.networkmerchants.com/token/Collect.js"
+      data-tokenization-key="aHkVSy-qHx96X-qJDaj7-d7zHuu"
+    ></script>
+  </head>
+  <body style="font-family: sans-serif; padding: 20px">
+    <h2>Full Flow: Vault + $3.00 Charge</h2>
+    <div
+      id="ccnumber"
+      style="border: 1px solid #ccc; height: 30px; margin: 10px 0"
+    ></div>
+    <div
+      id="ccexp"
+      style="border: 1px solid #ccc; height: 30px; margin: 10px 0"
+    ></div>
+    <div
+      id="cvv"
+      style="border: 1px solid #ccc; height: 30px; margin: 10px 0"
+    ></div>
+    <button id="pay-btn" style="padding: 10px 20px">Pay $3.00 Now</button>
+
+    <pre id="log" style="background: #eee; padding: 10px; margin-top: 20px">
+Waiting...</pre
+    >
+
+    <script>
+      const log = (m) => (document.getElementById("log").innerText += "\n" + m);
+
+      CollectJS.configure({
+        paymentSelector: "#pay-btn",
+        fields: {
+          ccnumber: { selector: "#ccnumber" },
+          ccexp: { selector: "#ccexp" },
+          cvv: { selector: "#cvv" },
+        },
+        callback: async (response) => {
+          log("--- STARTING FULL FLOW ---");
+
+          try {
+            // 1. VAULT
+            log("Step 1: Vaulting...");
+            const vRes = await fetch("http://127.0.0.1:8000/api/vault", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              // FIXED: Used stringify instead of the non-existent asyncify
+              body: JSON.stringify({
+                token: response.token,
+                first_name: "Vaibhav",
+                last_name: "Vaidya",
+              }),
+            });
+            const vault = await vRes.json();
+
+            if (vault.response !== "1") {
+              return log(
+                "Vault Failed: " + (vault.responsetext || "Unknown Error"),
+              );
+            }
+            log("Vault Success! ID: " + vault.customer_vault_id);
+
+            // 2. PAY
+            log("Step 2: Charging $3.00...");
+            const pRes = await fetch("http://127.0.0.1:8000/api/pay", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              // FIXED: Used stringify here as well
+              body: JSON.stringify({
+                vault_id: vault.customer_vault_id,
+                amount: "3.00",
+              }),
+            });
+            const payment = await pRes.json();
+
+            if (payment.response === "1") {
+              log(
+                "Payment SUCCESS: " +
+                  payment.responsetext +
+                  " (ID: " +
+                  payment.transactionid +
+                  ")",
+              );
+
+              // 3. CHECK (Querying the Gateway to verify it exists in their DB)
+              log("Step 3: Verifying transaction in Gateway records...");
+              const cRes = await fetch(
+                `http://127.0.0.1:8000/api/check/${payment.transactionid}`,
+              );
+              const check = await cRes.json();
+              log(
+                "Gateway Record found: " +
+                  (check.raw_status.includes(payment.transactionid)
+                    ? "YES"
+                    : "NO"),
+              );
+            } else {
+              log("Payment DECLINED: " + payment.responsetext);
+            }
+          } catch (error) {
+            log("CRITICAL SCRIPT ERROR: " + error.message);
+          }
+        },
+      });
+    </script>
+  </body>
+</html>

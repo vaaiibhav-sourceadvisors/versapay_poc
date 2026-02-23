@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Versapay Custom Checkout</title>
+    <script
+      src="https://secure.networkmerchants.com/token/Collect.js"
+      data-tokenization-key=""
+    ></script>
+
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 500px;
+        margin: 40px auto;
+        padding: 20px;
+      }
+      .field-container {
+        border: 1px solid #ccc;
+        padding: 12px;
+        margin: 10px 0;
+        border-radius: 4px;
+        height: 20px; /* Crucial: Iframes need height to be visible */
+        background: #f9f9f9;
+      }
+      .hidden {
+        display: none;
+      }
+      button {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        width: 100%;
+        font-size: 16px;
+      }
+      .toggle-btns {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .toggle-btns button {
+        background: #eee;
+        color: #333;
+        flex: 1;
+      }
+      .toggle-btns button.active {
+        background: #007bff;
+        color: white;
+      }
+      label {
+        font-weight: bold;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Secure Payment</h2>
+
+    <div class="toggle-btns">
+      <button id="btn-card" class="active" onclick="setMode('card')">
+        Credit Card
+      </button>
+      <button id="btn-ach" onclick="setMode('ach')">ACH / eCheck</button>
+    </div>
+
+    <form id="payment-form">
+      <label>First Name</label>
+      <input
+        type="text"
+        id="fname"
+        style="width: 95%; padding: 10px; margin-bottom: 15px"
+        placeholder="John"
+      />
+
+      <label>Last Name</label>
+      <input
+        type="text"
+        id="lname"
+        style="width: 95%; padding: 10px; margin-bottom: 15px"
+        placeholder="Doe"
+      />
+
+      <div id="card-section">
+        <label>Card Number</label>
+        <div id="ccnumber" class="field-container"></div>
+        <label>Expiration (MM/YY)</label>
+        <div id="ccexp" class="field-container"></div>
+        <label>CVV</label>
+        <div id="cvv" class="field-container"></div>
+      </div>
+
+      <div id="ach-section" class="hidden">
+        <label>Account Name</label>
+        <div id="checkname" class="field-container"></div>
+        <label>Account Number</label>
+        <div id="checkaccount" class="field-container"></div>
+        <label>Routing Number</label>
+        <div id="checkaba" class="field-container"></div>
+      </div>
+
+      <button type="button" id="submit-btn">Save Payment Method</button>
+    </form>
+
+    <p id="status" style="text-align: center; margin-top: 20px"></p>
+
+    <script>
+      let currentMode = "card";
+
+      function setMode(mode) {
+        currentMode = mode;
+        console.log("Switched to mode:", mode);
+        document
+          .getElementById("card-section")
+          .classList.toggle("hidden", mode !== "card");
+        document
+          .getElementById("ach-section")
+          .classList.toggle("hidden", mode !== "ach");
+        document
+          .getElementById("btn-card")
+          .classList.toggle("active", mode === "card");
+        document
+          .getElementById("btn-ach")
+          .classList.toggle("active", mode === "ach");
+      }
+
+      // Configure Collect.js
+      // If your fields are still un-typeable, check the Tokenization Key in the script tag above!
+      CollectJS.configure({
+        paymentSelector: "#submit-btn",
+        fields: {
+          ccnumber: {
+            selector: "#ccnumber",
+            title: "Card Number",
+            placeholder: "xxxx xxxx xxxx xxxx",
+          },
+          ccexp: {
+            selector: "#ccexp",
+            title: "Expiration",
+            placeholder: "MM / YY",
+          },
+          cvv: { selector: "#cvv", title: "CVV", placeholder: "***" },
+          checkname: {
+            selector: "#checkname",
+            title: "Name on Account",
+            placeholder: "John Doe",
+          },
+          checkaccount: {
+            selector: "#checkaccount",
+            title: "Account Number",
+            placeholder: "00000000",
+          },
+          checkaba: {
+            selector: "#checkaba",
+            title: "Routing Number",
+            placeholder: "123456789",
+          },
+        },
+        callback: async (response) => {
+          console.log("1. Vaulting payment method...");
+          document.getElementById("status").innerText = "Sending to backend...";
+
+          // try {
+          //     const res = await fetch('http://localhost:8000/api/vault', {
+          //         method: 'POST',
+          //         headers: { 'Content-Type': 'application/json' },
+          //         body: JSON.stringify({
+          //             token: response.token,
+          //             first_name: document.getElementById('fname').value,
+          //             last_name: document.getElementById('lname').value,
+          //             payment_type: currentMode
+          //         })
+          //     });
+          //     const data = await res.json();
+          //     document.getElementById('status').innerText = "Success! ID: " + (data.vault_id || "Saved");
+          // } catch (err) {
+          //     console.error("Error contacting backend:", err);
+          //     document.getElementById('status').innerText = "Error contacting backend.";
+          // }
+          try {
+            // STEP 1: Vault the customer
+            const vaultRes = await fetch("http://localhost:8000/api/vault", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                token: response.token,
+                first_name: document.getElementById("fname").value,
+                last_name: document.getElementById("lname").value,
+                payment_type: mode,
+              }),
+            });
+            const vaultData = await vaultRes.json();
+
+            if (vaultData.status === "success") {
+              const vid = vaultData.vault_id;
+              console.log(`2. Vault Success (ID: ${vid}). Now charging $3.00...`);
+
+              // STEP 2: Charge the Vault ID $3.00
+              const payRes = await fetch("http://localhost:8000/api/pay", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  vault_id: vid,
+                  amount: "3.00",
+                }),
+              });
+              const payData = await payRes.json();
+
+              if (payData.status === "success") {
+                console.log(
+                  `COMPLETE! Trans ID: ${payData.transaction_id}. Status: ${payData.message}`,
+                );
+              } else {
+                console.log(`PAYMENT FAILED: ${payData.detail}`);
+              }
+            } else {
+              console.log("VAULTING FAILED: " + vaultData.detail);
+            }
+          } catch (e) {
+            console.log("CONNECTION ERROR: Check if FastAPI is running.");
+          }
+        },
+      });
+    </script>
+  </body>
+</html>
